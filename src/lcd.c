@@ -138,8 +138,8 @@ static const uint8_t *glyph_for(char c, lcd_font_t font, uint16_t *bytes_per_row
     }
 }
 
-static void lcd_draw_char(uint16_t x, uint16_t y, char c,
-                          lcd_font_t font, uint16_t fg, uint16_t bg)
+void lcd_draw_char(uint16_t x, uint16_t y, char c,
+                   lcd_font_t font, uint16_t fg, uint16_t bg)
 {
     const uint16_t w = font / 2;
     const uint16_t h = font;
@@ -178,53 +178,4 @@ uint16_t lcd_text_width(const char *s, lcd_font_t font)
         n++;
     }
     return n * (font / 2);
-}
-
-/* ---- NHD_0216HZ-style character API ------------------------------------ */
-
-static lcd_font_t text_font = LCD_FONT_24;
-static uint16_t text_fg = LCD_WHITE;
-static uint16_t text_bg = LCD_BLACK;
-static uint16_t origin_x = 0;
-static uint16_t origin_y = 0;
-static uint16_t cursor_x = 0;
-static uint16_t cursor_y = 0;
-
-void init_lcd(void)
-{
-    (void)lcd_init();
-}
-
-void clr_lcd(void)
-{
-    lcd_clear(text_bg);
-    set_cursor(0, 0);
-}
-
-void set_cursor(int column, int row)
-{
-    cursor_x = origin_x + (uint16_t)column * (text_font / 2);
-    cursor_y = origin_y + (uint16_t)row * text_font;
-}
-
-void print_lcd(const char *string)
-{
-    cursor_x = lcd_draw_string(cursor_x, cursor_y, string, text_font, text_fg, text_bg);
-}
-
-void lcd_set_text_font(lcd_font_t font)
-{
-    text_font = font;
-}
-
-void lcd_set_text_color(uint16_t fg, uint16_t bg)
-{
-    text_fg = fg;
-    text_bg = bg;
-}
-
-void lcd_set_text_origin(uint16_t x, uint16_t y)
-{
-    origin_x = x;
-    origin_y = y;
 }

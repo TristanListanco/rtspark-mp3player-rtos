@@ -1,8 +1,10 @@
 /*
  * timer_if.cpp - Ticker / Timeout on TIM2 and TIM5 (32-bit, APB1).
  */
+#include <math.h>
 #include "timer_if.h"
 #include "main.h"
+#include "stm32f4xx_it.h"
 
 namespace {
 
@@ -66,7 +68,7 @@ private:
 
 /* Objects are normally globals: the constructor only claims a timer slot.
  * The hardware is touched on the first attach(), after HAL/clock init. */
-TimerEvent::TimerEvent(bool one_shot)
+TimerEvent::TimerEvent(bool one_shot) noexcept
     : one_shot_(one_shot), slot_(-1), active_(false), callback_(nullptr)
 {
     if (next_free < kNumTimers) {
@@ -82,12 +84,12 @@ void TimerEvent::schedule(Callback cb, float seconds)
     }
     TIM_TypeDef *t = timer_regs(slot_);
 
-    uint32_t us = (seconds <= 0.0f) ? 1u : (uint32_t)(seconds * 1e6f + 0.5f);
+    uint32_t us = (seconds <= 0.0f) ? 1u : (uint32_t)lroundf(seconds * 1e6f);
     if (us == 0) {
         us = 1;
     }
 
-    IrqLock lock;
+    const IrqLock lock;
     enable_timer_clock(slot_);
 
     t->CR1 = 0;                                 /* stop */
@@ -110,7 +112,7 @@ void TimerEvent::detach()
         return;
     }
 
-    IrqLock lock;
+    const IrqLock lock;
     if (clock_on[slot_]) {
         TIM_TypeDef *t = timer_regs(slot_);
         t->CR1 = 0;

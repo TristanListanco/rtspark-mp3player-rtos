@@ -232,6 +232,7 @@ void MX_I2C2_Init(void)
     }
 }
 
+/* cppcheck-suppress constParameterPointer ; signature fixed by the HAL's weak callback */
 void HAL_I2C_MspInit(I2C_HandleTypeDef *hi2c)
 {
     if (hi2c->Instance == I2C2) {
@@ -331,6 +332,7 @@ void MX_ADC3_Init(void)
     }
 }
 
+/* cppcheck-suppress constParameterPointer ; signature fixed by the HAL's weak callback */
 void HAL_ADC_MspInit(ADC_HandleTypeDef *hadc)
 {
     if (hadc->Instance == ADC3) {
@@ -345,6 +347,7 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef *hadc)
 
 /* ============================ USART1 MSP ================================= */
 
+/* cppcheck-suppress constParameterPointer ; signature fixed by the HAL's weak callback */
 void HAL_UART_MspInit(UART_HandleTypeDef *huart)
 {
     if (huart->Instance == USART1) {

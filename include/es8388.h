@@ -39,8 +39,9 @@ extern "C" {
  * headphone outputs. Returns HAL_OK, or HAL_ERROR if the chip doesn't answer. */
 HAL_StatusTypeDef es8388_init(void);
 
-/* Output volume 0..100 %. 100 % = 0 dB, 1 % = -59.4 dB, 0 % = muted. */
-HAL_StatusTypeDef es8388_set_volume(uint8_t percent);
+/* DAC digital attenuation in 0.5 dB steps (0 = 0 dB ... 192 = -96 dB), both
+ * channels. Changes are ramped by the codec (no zipper noise). */
+HAL_StatusTypeDef es8388_set_attenuation(uint8_t half_db_steps);
 
 HAL_StatusTypeDef es8388_mute(int mute);
 

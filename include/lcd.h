@@ -1,11 +1,9 @@
 /*
  * lcd.h - RT-Spark on-board 1.3" 240x240 LCD (ST7789v3, 8080 8-bit via FSMC).
  *
- * Two layers:
- *  - Graphics: rectangles and text at pixel positions in RGB565 colours.
- *  - NHD_0216HZ-style text API (init_lcd / clr_lcd / set_cursor / print_lcd),
- *    modelled on the lab's NHD_0216HZ.h character LCD driver so application
- *    code can keep the same calls.
+ * Graphics driver: rectangles and text at pixel positions in RGB565 colours.
+ * The 16x2 character API of the course's NHD_0216HZ driver is ported on top
+ * of it in NHD_0216HZ.h.
  *
  * The driver is not thread-safe: the application serialises access with a
  * FreeRTOS mutex (see lcd_mutex in main.cpp).
@@ -53,6 +51,11 @@ uint16_t lcd_init(void);
 void lcd_clear(uint16_t color);
 void lcd_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color);
 
+/* Draws one character cell (font / 2 wide, font high). Characters outside
+ * ' '..'}' are shown as '?'. */
+void lcd_draw_char(uint16_t x, uint16_t y, char c,
+                   lcd_font_t font, uint16_t fg, uint16_t bg);
+
 /* Draws a string (no wrapping) and returns the x position after it. */
 uint16_t lcd_draw_string(uint16_t x, uint16_t y, const char *s,
                          lcd_font_t font, uint16_t fg, uint16_t bg);
@@ -61,18 +64,6 @@ uint16_t lcd_draw_string(uint16_t x, uint16_t y, const char *s,
 uint16_t lcd_text_width(const char *s, lcd_font_t font);
 
 void lcd_backlight(int on);
-
-/* ---- NHD_0216HZ-style character API ------------------------------------
- * Same calls as the course's NHD_0216HZ class (init_lcd, clr_lcd,
- * set_cursor); its printf() maps to snprintf() + print_lcd(). */
-
-void init_lcd(void);                        /* = lcd_init() */
-void clr_lcd(void);                         /* fills with the text background */
-void set_cursor(int column, int row);       /* character cell of the text font */
-void print_lcd(const char *string);         /* prints at the cursor, advances it */
-void lcd_set_text_font(lcd_font_t font);    /* default: LCD_FONT_24 (20x10 cells) */
-void lcd_set_text_color(uint16_t fg, uint16_t bg);
-void lcd_set_text_origin(uint16_t x, uint16_t y); /* pixel position of cell (0,0) */
 
 #ifdef __cplusplus
 }

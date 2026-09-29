@@ -10,8 +10,7 @@
 #define ES8388_I2C_ADDR     (0x10 << 1)     /* CE pin tied to GND */
 #define ES8388_I2C_TIMEOUT  20              /* ms */
 
-/* Volume range covered by the potentiometer, in 0.5 dB DAC steps (120 = -60 dB) */
-#define ES8388_VOLUME_RANGE 120
+#define ES8388_MAX_ATTENUATION 192         /* -96 dB */
 #define ES8388_DAC_MUTE_BIT 0x04
 #define ES8388_SOFT_RAMP    0x20            /* ramp volume changes (no zipper noise) */
 
@@ -27,7 +26,7 @@ HAL_StatusTypeDef es8388_init(void)
         return HAL_ERROR;
     }
 
-    static const uint8_t seq[][2] = {
+    static const struct { uint8_t reg; uint8_t val; } seq[] = {
         { ES8388_DACCONTROL3,  ES8388_DAC_MUTE_BIT }, /* mute while configuring */
         { ES8388_CONTROL2,     0x50 },  /* reference / low-power defaults */
         { ES8388_CHIPPOWER,    0x00 },  /* power up all blocks */
@@ -51,7 +50,7 @@ HAL_StatusTypeDef es8388_init(void)
     };
 
     for (unsigned i = 0; i < sizeof seq / sizeof seq[0]; i++) {
-        if (es_write(seq[i][0], seq[i][1]) != HAL_OK) {
+        if (es_write(seq[i].reg, seq[i].val) != HAL_OK) {
             return HAL_ERROR;
         }
     }
@@ -64,19 +63,14 @@ HAL_StatusTypeDef es8388_mute(int mute)
                     ES8388_SOFT_RAMP | (mute ? ES8388_DAC_MUTE_BIT : 0));
 }
 
-HAL_StatusTypeDef es8388_set_volume(uint8_t percent)
+HAL_StatusTypeDef es8388_set_attenuation(uint8_t half_db_steps)
 {
-    if (percent == 0) {
-        return es8388_mute(1);
+    if (half_db_steps > ES8388_MAX_ATTENUATION) {
+        half_db_steps = ES8388_MAX_ATTENUATION;
     }
-    if (percent > 100) {
-        percent = 100;
+    HAL_StatusTypeDef st = es_write(ES8388_DACCONTROL4, half_db_steps);
+    if (st == HAL_OK) {
+        st = es_write(ES8388_DACCONTROL5, half_db_steps);
     }
-
-    /* Linear in dB: 100 % -> 0 dB ... 1 % -> -59.4 dB (register = 0.5 dB steps) */
-    const uint8_t att = (uint8_t)((100 - percent) * ES8388_VOLUME_RANGE / 100);
-    HAL_StatusTypeDef st = es_write(ES8388_DACCONTROL4, att);
-    if (st == HAL_OK) st = es_write(ES8388_DACCONTROL5, att);
-    if (st == HAL_OK) st = es8388_mute(0);
     return st;
 }

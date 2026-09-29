@@ -10,6 +10,9 @@ An 8-song "MP3 player" for the RT-Thread **RT-Spark** board (STM32F407ZGT6), bui
 - A **potentiometer** sets the volume.
 - Usage instructions are printed on the **UART** console.
 - Three FreeRTOS threads run cooperatively, the LCD is protected by a **mutex**, and the MCU sleeps when idle.
+- Uses the course files: `song.h` / `song_def.h` unchanged, and the `NHD_0216HZ` driver ported to the on-board LCD.
+- 51 unit tests run on the PC, and 11 on-board tests check the hardware. Static analysis (cppcheck, clang-tidy, strict GCC warnings) is clean;
+  see [Tests](#tests) and [docs/static-analysis.md](docs/static-analysis.md).
 
 ## How each requirement is met
 
@@ -17,15 +20,15 @@ An 8-song "MP3 player" for the RT-Thread **RT-Spark** board (STM32F407ZGT6), bui
 |---|---|
 | Define missing inputs and outputs | `include/main.h` (pin map), "Inputs and outputs" section of `src/main.cpp`, `MX_GPIO_Init()` |
 | `update_lcd_leds_thread()`, `polling_buttons()`, `adjust_volume()` | `src/main.cpp`, the three thread functions |
-| B2–B4 give the song number in binary; nothing pressed = first song | `polling_buttons()`: `index = B2<<2 \| B3<<1 \| B4` (pressed = 1) |
-| Hold B2–B4, press B1 to select, release, press B1 again to confirm | `polling_buttons()`, B1 edge handling |
+| B2–B4 give the song number in binary; nothing pressed = first song | `song_index_from_buttons()` (`src/player_logic.cpp`): B2 = MSB, pressed = 1 |
+| Hold B2–B4, press B1 to select, release, press B1 again to confirm | `SongSelector` (`player_logic.cpp`), driven by `polling_buttons()` |
 | 5 s to confirm, otherwise continue normally | `Timeout confirm_timeout` → `confirm_window_expired()` |
-| Song name on LCD while playing, confirmation message when changing | `update_lcd_leds_thread()` (two-line name via NHD-style `set_cursor`/`print_lcd`) |
+| Song name on LCD while playing, confirmation message when changing | `update_lcd_leds_thread()`; the two name lines use the course `NHD_0216HZ` API (`lcd.set_cursor`, `lcd.printf`) |
 | Timeout for the 5 s window, Ticker to play music | `include/timer_if.h`: mbed-style `Ticker`/`Timeout` on hardware timers TIM2/TIM5 |
 | USER_BUTTON stops / plays | `polling_buttons()` → `stop_playback()` / `start_playback()` |
 | Blue = playing, red = paused, green = changing song | `update_lcd_leds_thread()` |
 | 3 threads, infinite loops, cooperative scheduling | `configUSE_PREEMPTION 0`; every thread ends its loop with `vTaskDelay()` |
-| Mutex for exclusive LCD access | `lcd_mutex` (LCD thread and volume thread both draw) |
+| Mutex for exclusive LCD access | `lcd_mutex`, held through an RAII `LcdLock` (the LCD thread and the volume thread both draw) |
 | Adjust the volume | `adjust_volume()`: ADC3 → ES8388 DAC volume over I2C2 |
 | main: clear LCD, start threads, UART instructions, sleep mode | `main()`; sleep happens in `vApplicationIdleHook()` (`src/freertos_hooks.c`) |
 
@@ -131,8 +134,8 @@ Playback is stopped: press USER to play song 1.
 
 ```
             +-------------------------+     +---------------------+
-Ticker ISR  | play_next_note()        | --> | audio_player.c      | --DMA--> I2S3 --> ES8388 --> jack
-(TIM2)      | next note, re-arm       |     | wavetable synth     |
+Ticker ISR  | play_next_note()        | --> | synth.c (wavetable) | --DMA--> I2S3 --> ES8388 --> jack
+(TIM2)      | next note, re-arm       |     | via audio_player.c  |
             +-------------------------+     +---------------------+
 Timeout ISR | confirm_window_expired()|
 (TIM5)      +-------------------------+
@@ -157,6 +160,11 @@ Timeout ISR | confirm_window_expired()|
   with frequency = 1000 / period.
   A short attack/release envelope avoids clicks, and each note sounds for 90 % of its length so repeated notes stay distinct.
   Rests (0 Hz notes) are silent.
+- **Song name display.** The course `NHD_0216HZ` class is ported to the ST7789 (`src/NHD_0216HZ.cpp`), with the same
+  methods, HD44780 command codes and cursor address math. `write_cmd`/`write_data` drive a model of the controller's
+  display RAM, drawn as a 16×2 character window on the colour LCD.
+- **Testable logic.** Everything that doesn't touch hardware is in `player_logic.cpp` (note conversion, ticker
+  sequencing, select/confirm state machine, debounce, volume mapping) and `synth.c` (tone generation). Both are unit-tested on the PC.
 - **Volume** is the ES8388 DAC digital attenuation: 0 dB down to −60 dB, linear in dB across the pot travel, and mute at 0 %.
 - **Interrupt priorities.** The audio DMA and both timers use priority 6. That is below
   `configMAX_SYSCALL_INTERRUPT_PRIORITY` (5), so `taskENTER_CRITICAL()` masks them while the threads read
@@ -167,19 +175,25 @@ Timeout ISR | confirm_window_expired()|
 | File | Purpose |
 |---|---|
 | `src/main.cpp` | Application: state, Ticker/Timeout callbacks, the 3 threads, `main()` |
+| `include/player_logic.h`, `src/player_logic.cpp` | Hardware-free player logic (unit-tested) |
+| `include/NHD_0216HZ.h`, `src/NHD_0216HZ.cpp` | Course 16x2 LCD driver, ported to the ST7789 |
 | `include/main.h` | Pin map (CubeMX-style labels), handles, IRQ priorities |
 | `src/board_init.c` | `SystemClock_Config()`, `MX_*_Init()`, HAL MSP callbacks, `Error_Handler()` |
-| `src/stm32f4xx_it.c` | SysTick (HAL + FreeRTOS tick), DMA, fault handlers |
+| `src/stm32f4xx_it.c`, `include/stm32f4xx_it.h` | SysTick (HAL + FreeRTOS tick), DMA, fault handlers |
 | `src/freertos_hooks.c` | Idle hook (sleep mode), stack-overflow and malloc-failed hooks |
 | `include/timer_if.h`, `src/timer_if.cpp` | mbed-style `Ticker` and `Timeout` |
-| `include/lcd.h`, `src/lcd.c`, `include/lcd_font.h` | ST7789 driver + NHD_0216HZ-style text API |
+| `include/lcd.h`, `src/lcd.c`, `include/lcd_font.h` | ST7789 graphics driver and font |
 | `include/es8388.h`, `src/es8388.c` | Codec setup and volume over I2C2 |
-| `include/audio_player.h`, `src/audio_player.c` | I2S DMA tone synthesiser |
+| `include/synth.h`, `src/synth.c` | Wavetable tone synthesiser (hardware-free, unit-tested) |
+| `include/audio_player.h`, `src/audio_player.c` | Streams the synthesiser to I2S3 through circular DMA |
 | `include/console.h`, `src/console.c` | Mutex-protected UART printing |
 | `include/song.h`, `include/song_def.h` | Course-provided `Song` class and the 10 songs (unchanged copies) |
 | `include/FreeRTOSConfig.h`, `include/stm32f4xx_hal_conf.h` | RTOS and HAL configuration |
 | `lib/FreeRTOS-Kernel/` | FreeRTOS V11.1.0 (ARM_CM4F port, heap_4) |
 | `tools/fpu_flags.py` | Adds the Cortex-M4F hard-float flags PlatformIO doesn't set by default |
+| `tools/sanitizer_link.py` | Passes the sanitizer flags to the linker for the native tests |
+| `test/native/`, `test/embedded/` | Unit tests (PC) and on-board tests, see [Tests](#tests) |
+| `docs/static-analysis.md` | Static analysis setup, results and findings |
 
 ### Course files
 
@@ -188,15 +202,24 @@ Timeout ISR | confirm_window_expired()|
 - **`song.h`, `song_def.h`:** used unchanged. They're copied to `include/`.
   - `main.cpp` lists the ten `Song` objects in `songs[]`.
   - Only the first 8 can be chosen with three buttons, so Symphony No. 5 and Eine Kleine Nachtmusik are defined but not selectable.
-- **`NHD_0216HZ.h/.cpp`:** mbed-only (SPI shift register, `DigitalOut`), so they're used as the basis for `lcd.h/lcd.c`.
-  That driver keeps the same calls (`init_lcd`, `clr_lcd`, `set_cursor`, and `print_lcd` for `printf`) on the ST7789.
+- **`NHD_0216HZ.h/.cpp`:** ported to `include/NHD_0216HZ.h` and `src/NHD_0216HZ.cpp`. The original drives a Newhaven 16x2 LCD
+  through a 74HC595 shift register with mbed `DigitalOut`s. The port:
+  - keeps the class and its API (`init_lcd`, `write_cmd`, `write_data`, `printf`, `set_cursor`, `clr_lcd`);
+  - keeps the original `init_lcd`, `printf`, `set_cursor` and `clr_lcd` code;
+  - replaces only the shift-register transport, so commands go to an HD44780 model drawn on the ST7789.
+
+  It also fixes the original's `printf` buffer overflow on 16-character names, and drops the `ENABLE` macro, which clashes with the STM32 HAL.
+  The header comment lists every change. `main.cpp` uses it as the mbed version did:
+  `lcd.set_cursor(0, 0); lcd.printf("%s", song.name1.c_str());`
+- **Problems found in the course files** (buffer overflow, 4-bit init sequence, header-only globals, …) are listed in
+  [docs/static-analysis.md](docs/static-analysis.md#findings-in-the-course-provided-files).
 - **`main.cpp` (mbed basis):** not in the folder. Two things were therefore inferred from `song_def.h`:
   - **Pitch:** `note[]` holds PWM periods in ms, and `No` (0) is a rest. `note_hz()` converts them.
   - **Duration:** `note_seconds()` computes `beat × 8 × tempo`. `beat` is a fraction of a whole note (b0 = 1 … b3 = 1/8),
     so `tempo` is the length of a b3 note in seconds.
     - This scale gives sensible tempos for the fast and medium pieces.
     - Nocturne in E♭ writes every eighth note as `b0`, so it plays slowly (about 4 minutes).
-    - If the course `main.cpp` uses another formula, change `kTempoScale` / `note_seconds()` in `src/main.cpp`.
+    - If the course `main.cpp` uses another formula, change `kTempoScale` (`include/player_logic.h`) or `note_seconds()` (`src/player_logic.cpp`).
       That's the only place timing is defined.
 
 ## STM32CubeMX equivalent
@@ -218,19 +241,46 @@ matches `src/board_init.c`.
 | NVIC | Priority group 4; DMA1 Stream 7, TIM2, TIM5 = priority 6 |
 | FREERTOS | Preemption off, 1 kHz tick, 16 KB heap_4, idle hook on |
 
+## Tests
+
+```sh
+pio test -e native          # 51 unit tests on the PC, under AddressSanitizer + UBSan (no board needed)
+pio test -e rtspark_test    # 11 on-board tests (board on USB-DBG; don't press any button)
+```
+
+| Suite | What it checks |
+|---|---|
+| `native/test_player_logic` (20) | Note period → Hz, `beat × 8 × tempo`, ticker sequence incl. rests and the repeat gap, B2–B4 → song number (all 8), select → confirm, select → 5 s timeout → new selection, debouncing, pot → %, volume hysteresis, attenuation mapping, console titles |
+| `native/test_songs` (8) | The course `song_def.h`: every `length` matches its arrays, notes are valid periods or rests (342), beats/tempos positive, names fit 16 characters, every song 5 s – 5 min |
+| `native/test_nhd_0216hz` (15) | The ported driver on a fake screen: HD44780 addresses from `set_cursor`, `printf` (incl. the 16-character names that overflowed the original), 16-column limit, clear, DDRAM line wrap, display on/off, entry mode, CGRAM, colours |
+| `native/test_synth` (8) | Pitch of all 29 notes used by the songs (±5 cents), silence for rests / out-of-range notes, 90 % gate and release timing, no clipping, click-free note starts, ends and back-to-back notes |
+| `embedded/test_hardware` (11) | On the board: LCD ID `0x81B3`, ES8388 answers on I2C2, I2S at 32609 Hz with DMA running, Ticker rate and re-attach, Timeout fires once / can be cancelled, buttons read released, pot ADC reading, plus a 440 Hz tone and an R-G-B LED sequence to check by ear and eye |
+
+The native suites include the unit under test directly (`#include "../../../src/…"`), so they build without the HAL.
+The NHD suite provides a fake `lcd_draw_char` / `lcd_fill_rect`.
+
+## Static analysis
+
+`pio check` runs cppcheck and clang-tidy on the project code. The firmware build also enables a strict GCC warning set for our sources.
+All three report nothing. The findings fixed along the way, the ones accepted and why, and the issues in the course-provided files are in
+[docs/static-analysis.md](docs/static-analysis.md).
+
 ## Verification status
 
-- **Build:** compiles with no warnings under `-Wall -Wextra`.
-  - Flash: 54 KB of 1 MB. RAM: 31 KB of 128 KB (16 KB FreeRTOS heap, about 10 KB of song arrays).
+- **Build:** compiles with no warnings under `-Wall -Wextra` and the strict set in `build_src_flags`.
+  - Flash: 55 KB of 1 MB. RAM: 31 KB of 128 KB (16 KB FreeRTOS heap, about 10 KB of song arrays).
   - The ELF was checked for the hard-float ABI and for the correct SVC, PendSV, SysTick, DMA1_Stream7, TIM2 and TIM5 vector entries.
-- **Audio path (off-target):** `audio_player.c` and the course `song_def.h` were compiled on a PC with a stubbed HAL,
-  and all 10 songs (1,198 notes) were rendered with the firmware's note timing and pitch conversion.
-  - All 856 pitched notes were within ±25 cents of their target.
-  - All 342 rests were silent, with no clipping and no discontinuities.
+- **Unit tests:** 51/51 pass on the PC under AddressSanitizer and UBSan.
+  - Temporarily restoring the original driver's `printf` makes ASan report the stack buffer overflow, so the test does catch it.
+- **Audio path (off-target):** all 10 course songs (1,198 notes) were also rendered through the synthesiser with the firmware's timing.
+  - All 856 pitched notes were within ±25 cents.
+  - All 342 rests were silent, with no clipping or discontinuities.
+- **Static analysis:** cppcheck, clang-tidy and the strict GCC warnings are clean for the project code.
 - **On hardware:** not yet run.
   - These peripheral settings come from the RT-Spark schematic and RT-Thread's official BSP:
     LCD FSMC bank and A18 RS line, the ST7789 init sequence, I2S3/I2C2 pins and the ES8388 register sequence.
-  - At first power-up, check the UART line `LCD id 0x81B3 | ES8388 OK`.
+  - At first power-up, check the UART line `LCD id 0x81B3 | ES8388 OK`, or run `pio test -e rtspark_test`.
+    The on-board suite compiles, but hasn't been run.
 
 ## Troubleshooting
 

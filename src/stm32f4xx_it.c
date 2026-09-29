@@ -5,6 +5,7 @@
  * FreeRTOSConfig.h). TIM2/TIM5 handlers live in timer_if.cpp.
  */
 #include "main.h"
+#include "stm32f4xx_it.h"
 #include "FreeRTOS.h"
 #include "task.h"
 

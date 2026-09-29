@@ -97,7 +97,7 @@ void MX_FSMC_Init(void);
 void MX_I2C2_Init(void);
 void MX_I2S3_Init(void);
 void MX_ADC3_Init(void);
-void Error_Handler(void);
+void Error_Handler(void) __attribute__((noreturn));   /* blinks the red LED forever */
 
 #ifdef __cplusplus
 }

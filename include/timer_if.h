@@ -35,7 +35,7 @@ public:
     static void handle_irq(int slot);
 
 protected:
-    explicit TimerEvent(bool one_shot);
+    explicit TimerEvent(bool one_shot) noexcept;
     void schedule(Callback cb, float seconds);
 
 private:
@@ -50,14 +50,14 @@ private:
 
 class Ticker : public TimerEvent {
 public:
-    Ticker() : TimerEvent(false) {}
+    Ticker() noexcept : TimerEvent(false) {}
     /* Calls fn every `seconds` seconds until detach(). */
     void attach(Callback fn, float seconds) { schedule(fn, seconds); }
 };
 
 class Timeout : public TimerEvent {
 public:
-    Timeout() : TimerEvent(true) {}
+    Timeout() noexcept : TimerEvent(true) {}
     /* Calls fn once, `seconds` seconds from now. */
     void attach(Callback fn, float seconds) { schedule(fn, seconds); }
 };
