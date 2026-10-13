@@ -5,9 +5,9 @@ An 8-song "MP3 player" for the RT-Thread **RT-Spark** board (STM32F407ZGT6), bui
 
 - Songs play through the on-board **ES8388** codec to a speaker on the 3.5 mm headphone jack.
 - The song name and a confirmation message appear on the on-board **240×240 ST7789 LCD**.
-- Buttons **B2–B4** pick a song in binary, **B1** selects and confirms (5 s window), **KEY_UP** stops/plays, and **KEY_LEFT/KEY_RIGHT** adjust volume.
+- Buttons **B2–B4** pick a song in binary, **B1** selects and confirms (5 s window), **KEY_UP** stops/plays.
 - An **RGB LED** shows the state (blue playing, red paused, green changing song).
-- The on-board **KEY_LEFT/KEY_RIGHT** buttons set the volume and the LCD shows a volume bar.
+- A **3-pin potentiometer** on **PF6 / A0** sets the volume and the LCD shows a volume bar.
 - Usage instructions are printed on the **UART** console.
 - Three FreeRTOS threads run cooperatively, the LCD is protected by a **mutex**, and the MCU sleeps when idle.
 - Uses the course files: `song.h` / `song_def.h` unchanged, and the `NHD_0216HZ` driver ported to the on-board LCD.
@@ -56,8 +56,8 @@ Each button: **3.3 V → 330 Ω → GPIO pin**, and **GPIO pin → button → GN
 
 The internal pull-ups are also enabled, so a missing 330 Ω resistor won't leave an input floating.
 
-**KEY_UP** is the play/pause key (PC5). **KEY_LEFT** and **KEY_RIGHT** adjust
-volume down/up (PC0 and PC4). They need no wiring.
+**KEY_UP** is the play/pause key (PC5). It needs no wiring. Volume is controlled
+by the potentiometer; KEY_LEFT and KEY_RIGHT are unused.
 
 ### RGB LED (handout Figure 1.4)
 
@@ -76,8 +76,24 @@ The on-board red (PF12) and blue (PF11) LEDs mirror the red/blue state, so you c
 
 ### Potentiometer (handout Figure 1.2)
 
-**3.3 V → 10 kΩ pot → 100 Ω → GND**, with the **wiper → PF6** (PMOD2 header, pin labelled **A0**, ADC3_IN4).
-3.3 V and GND are on the same PMOD2 row.
+Use a **10 kohm linear 3-pin potentiometer** (often marked B10K).
+
+| Potentiometer terminal | RT-Spark connection |
+|---|---|
+| One outer terminal / VCC | **3.3 V** |
+| Middle terminal / wiper / SIG | **PF6 / A0**, on **PMOD2** (ADC3_IN4) |
+| Other outer terminal / GND | **GND** (or through the handout's 100 ohm resistor) |
+
+With the board upright as in the [official pin map](https://github.com/RT-Thread/rt-thread/blob/master/bsp/stm32/stm32f407-rt-spark/applications/arduino_pinout/Rt-spark_Rtduino_Pin_Map.drawio.png),
+use the top-right PMOD2 header marked Type 1A/3A. Its analog row runs
+**3.3V, GND, PF4, PF5, PF6 (A0), PF7** from left to right. Confirm the pin map
+against your board before connecting. **Use 3.3 V, never 5 V, for the pot supply.**
+If rotation works backwards, power off and swap only the two outer terminals.
+For a module, follow VCC/GND/SIG labels rather than assuming the middle pin is SIG.
+
+The firmware averages eight ADC conversions every 100 ms, ignores changes under
+2 percentage points except at the endpoints, and mutes at minimum. The knob is
+sampled before Song 1 starts. See [potentiometer setup and checks](docs/potentiometer.md).
 
 ### Speaker
 
@@ -118,7 +134,7 @@ B2 B3 B4   Song
   1  1  1   8. Symphony No. 40 - Mozart
 
 LCD id 0x81B3 | ES8388 READY | I2S 32609 Hz
-Song 1 starts automatically. Press USER to pause/resume.
+Song 1 starts automatically. Press KEY_UP to pause/resume.
 ```
 
 ## Using the player
@@ -129,7 +145,7 @@ Song 1 starts automatically. Press USER to pause/resume.
    "Change song?" with a countdown.
 4. Press **B1** again within **5 s** to play the new song from the start. If you don't, the display returns
    to the current song and playback carries on as before.
-5. Press **KEY_LEFT** or **KEY_RIGHT** to lower or raise the volume. The LCD shows the level at the bottom.
+5. Turn the **potentiometer** to lower or raise the volume; minimum mutes. The LCD shows the level at the bottom.
 
 ## Software design
 
@@ -166,7 +182,7 @@ Timeout ISR | confirm_window_expired()|
   display RAM, drawn as a 16×2 character window on the colour LCD.
 - **Testable logic.** Everything that doesn't touch hardware is in `player_logic.cpp` (note conversion, ticker
   sequencing, select/confirm state machine, debounce, volume mapping) and `synth.c` (tone generation). Both are unit-tested on the PC.
-- **Volume** is the ES8388 DAC digital attenuation: 0 dB down to −60 dB, linear in dB across the pot travel, and mute at 0 %.
+- **Volume** is the ES8388 DAC digital attenuation: 0 dB down to −96 dB, linear in dB across the pot travel, and mute at 0 %.
 - **Interrupt priorities.** The audio DMA and both timers use priority 6. That is below
   `configMAX_SYSCALL_INTERRUPT_PRIORITY` (5), so `taskENTER_CRITICAL()` masks them while the threads read
   multi-field state. Having the same priority, they never preempt each other.
@@ -233,7 +249,7 @@ matches `src/board_init.c`.
 | RCC | HSE crystal 8 MHz; PLL M 4, N 168, P 2, Q 7 → 168 MHz; APB1 /4, APB2 /2; PLLI2S N 192, R 2 |
 | SYS | Debug: Serial Wire; timebase SysTick (shared with FreeRTOS) |
 | GPIO out | PG2, PG4, PG6 (RGB); PF11, PF12 (board LEDs); PD3 (LCD_RST); PF9 (LCD_BL) |
-| GPIO in (pull-up) | PD10, PD8, PE14, PE12 (B1–B4); PC0 (USER) |
+| GPIO in (pull-up) | PD10, PD8, PE14, PE12 (B1–B4); PC5 (KEY_UP) |
 | ADC3 | IN4 (PF6), 12-bit, software start, 480 cycles |
 | I2C2 | PF0 SDA, PF1 SCL, 100 kHz |
 | I2S3 | Half-duplex master TX, Philips, 16-bit, MCLK output, 32 kHz; DMA1 Stream 7 circular, half-word |

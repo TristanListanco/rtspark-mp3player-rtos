@@ -12,12 +12,12 @@
  *  - LCD shows the song name while playing and a confirmation message while
  *    a new song is being chosen.
  *  - RGB LED: blue = playing, red = paused, green = changing song.
- *  - LEFT/RIGHT keys set the volume; usage instructions are sent over UART.
+ *  - Potentiometer sets the volume; usage instructions are sent over UART.
  *
  * Threads (each an infinite loop that waits after every update):
  *  1. update_lcd_leds_thread()  LCD + RGB LEDs
  *  2. polling_buttons()         B1..B4 and USER_BUTTON
- *  3. adjust_volume()           LEFT/RIGHT keys -> ES8388 volume
+ *  3. adjust_volume()           potentiometer -> ES8388 volume
  * Interrupt-driven timers (timer_if.h):
  *  - Ticker  music_ticker       plays the song note by note
  *  - Timeout confirm_timeout    5 s confirmation window
@@ -79,8 +79,8 @@ static const TickType_t kLcdPeriod       = pdMS_TO_TICKS(50);
 static const TickType_t kButtonPeriod    = pdMS_TO_TICKS(10);
 static const TickType_t kVolumePeriod    = pdMS_TO_TICKS(100);
 static const uint8_t    kDebounceSamples = 3;        /* x kButtonPeriod = 30 ms */
-static const int        kInitialVolume   = 80;
-static const int        kVolumeStep      = 5;
+static const uint32_t   kPotRawMin       = 80;       /* endpoint dead zones */
+static const uint32_t   kPotRawMax       = 4000;
 
 static_assert(kNumSongs >= kSelectableSongs, "need at least 8 songs");
 
@@ -97,18 +97,8 @@ static const Pin button1     = { BTN1_GPIO_Port, BTN1_Pin };         /* select /
 static const Pin button2     = { BTN2_GPIO_Port, BTN2_Pin };         /* song bit 2 (MSB) */
 static const Pin button3     = { BTN3_GPIO_Port, BTN3_Pin };         /* song bit 1 */
 static const Pin button4     = { BTN4_GPIO_Port, BTN4_Pin };         /* song bit 0 (LSB) */
-static const Pin user_button = { GPIOC, GPIO_PIN_5 }; /* KEY_UP: play / stop */
-static const Pin volume_down = { GPIOC, GPIO_PIN_0 }; /* KEY_LEFT */
-static const Pin volume_up   = { GPIOC, GPIO_PIN_4 }; /* KEY_RIGHT */
-
-static void init_application_keys(void)
-{
-    GPIO_InitTypeDef g = {0};
-    g.Pin = GPIO_PIN_4 | GPIO_PIN_5;
-    g.Mode = GPIO_MODE_INPUT;
-    g.Pull = GPIO_PULLUP;
-    HAL_GPIO_Init(GPIOC, &g);
-}
+static const Pin user_button = { USER_BTN_GPIO_Port, USER_BTN_Pin }; /* KEY_UP */
+/* Potentiometer: POT_Pin (PF6 / PMOD2 A0), ADC3 channel 4. */
 
 /* Outputs */
 static const Pin led_red     = { LED_RED_GPIO_Port, LED_RED_Pin };
@@ -440,8 +430,27 @@ static void polling_buttons(void *arg)
 }
 
 /* ==========================================================================
- * Thread 3: adjust the volume from the left/right keys
+ * Thread 3: adjust the volume from the potentiometer
  * ========================================================================= */
+/* Average eight conversions. Failed reads leave the last volume unchanged. */
+static bool read_potentiometer(uint32_t &raw)
+{
+    uint32_t sum = 0;
+    for (unsigned i = 0; i < 8; ++i) {
+        if (HAL_ADC_Start(&hadc3) != HAL_OK ||
+            HAL_ADC_PollForConversion(&hadc3, 2) != HAL_OK) {
+            (void)HAL_ADC_Stop(&hadc3);
+            return false;
+        }
+        sum += HAL_ADC_GetValue(&hadc3);
+        if (HAL_ADC_Stop(&hadc3) != HAL_OK) {
+            return false;
+        }
+    }
+    raw = sum / 8u;
+    return true;
+}
+
 static void draw_volume(int percent)
 {
     char text[24];
@@ -468,57 +477,24 @@ static void apply_volume(int percent)
 
 static void adjust_volume(void *arg)
 {
-    int volume = kInitialVolume;
-    Debouncer left = { false, 0 };
-    Debouncer right = { false, 0 };
-    bool shown = false;
-    uint16_t left_repeat = 0;
-    uint16_t right_repeat = 0;
+    int volume = -1;
 
     for (;;) {
-        const bool left_pressed = debounce(left, is_pressed(volume_down), kDebounceSamples);
-        const bool right_pressed = debounce(right, is_pressed(volume_up), kDebounceSamples);
-        int requested = volume;
-        if (left_pressed && !right_pressed) {
-            requested -= kVolumeStep;
-            left_repeat = 0;
-        } else if (left.pressed && !right.pressed) {
-            if (++left_repeat >= 30 && ((left_repeat - 30) % 10) == 0) {
-                requested -= kVolumeStep;
+        uint32_t raw = 0;
+        if (read_potentiometer(raw)) {
+            const int percent = pot_to_percent(raw, kPotRawMin, kPotRawMax);
+            if (volume_should_update(volume, percent)) {
+                apply_volume(percent);
+                volume = percent;
+                {
+                    const LcdLock lock;
+                    draw_volume(volume);
+                }
+                console_printf("Volume: %d%% (pot ADC: %lu)\r\n",
+                               volume, (unsigned long)raw);
             }
-        } else {
-            left_repeat = 0;
         }
-        if (right_pressed && !left_pressed) {
-            requested += kVolumeStep;
-            right_repeat = 0;
-        } else if (right.pressed && !left.pressed) {
-            if (++right_repeat >= 30 && ((right_repeat - 30) % 10) == 0) {
-                requested += kVolumeStep;
-            }
-        } else {
-            right_repeat = 0;
-        }
-        if (requested < 0) requested = 0;
-        if (requested > 100) requested = 100;
-
-        if (volume != requested) {
-            apply_volume(requested);
-            volume = requested;
-
-            {
-                const LcdLock lock;      /* exclusive LCD access */
-                draw_volume(volume);
-            }
-
-            console_printf("Volume: %d%%\r\n", volume);
-        } else if (!shown && codec_ok) {
-            const LcdLock lock;
-            draw_volume(volume);
-            shown = true;
-        }
-
-        vTaskDelay(kButtonPeriod);       /* sample volume keys at button rate */
+        vTaskDelay(kVolumePeriod);       /* 100 ms; let the other threads run */
     }
 }
 
@@ -540,7 +516,7 @@ static void print_instructions(uint16_t lcd_id)
         "    2. While holding them, press B1, then release all buttons\r\n"
         "    3. Press B1 again within 5 s to confirm\r\n"
         "       (no confirmation in 5 s = keep the current song)\r\n"
-        "  KEY_LEFT / KEY_RIGHT   : volume down / up\r\n"
+        "  Potentiometer (PF6/A0) : volume (minimum = mute)\r\n"
         "LEDs: BLUE = playing, RED = paused, GREEN = changing song\r\n"
         "\r\n"
         "B2 B3 B4   Song\r\n");
@@ -560,7 +536,6 @@ int main(void)
     SystemClock_Config();
 
     MX_GPIO_Init();
-    init_application_keys();
     MX_DMA_Init();
     MX_USART1_UART_Init();
     MX_FSMC_Init();
@@ -582,12 +557,14 @@ int main(void)
         codec_ok = (es8388_start_dac() == HAL_OK);
     }
     if (codec_ok) {
-        /* Start at a clearly audible but safer level until the volume task
-         * applies the key-controlled setting after the scheduler starts. */
-        codec_ok = (es8388_set_attenuation(20u) == HAL_OK);
+        (void)es8388_verify_playback_config();
     }
     if (codec_ok) {
-        (void)es8388_verify_playback_config();
+        /* Honor the knob before auto-play; a failed initial ADC read mutes. */
+        uint32_t raw = 0;
+        const int percent = read_potentiometer(raw)
+                          ? pot_to_percent(raw, kPotRawMin, kPotRawMax) : 0;
+        apply_volume(percent);
     }
     if (audio_start() != HAL_OK) {
         Error_Handler();

@@ -28,8 +28,8 @@ extern "C" {
 #define BTN4_Pin              GPIO_PIN_12   /* PE12 - header D15: song bit 0 (LSB) */
 #define BTN4_GPIO_Port        GPIOE
 
-/* USER_BUTTON = on-board KEY_LEFT (KEY0), active LOW. Play / pause. */
-#define USER_BTN_Pin          GPIO_PIN_0    /* PC0 */
+/* USER_BUTTON = on-board KEY_UP, active LOW. Play / pause. */
+#define USER_BTN_Pin          GPIO_PIN_5    /* PC5 */
 #define USER_BTN_GPIO_Port    GPIOC
 
 /* Volume potentiometer wiper (Figure 1.2): PMOD2 header "A0" = PF6 = ADC3_IN4 */
