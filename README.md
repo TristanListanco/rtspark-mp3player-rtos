@@ -5,9 +5,9 @@ An 8-song "MP3 player" for the RT-Thread **RT-Spark** board (STM32F407ZGT6), bui
 
 - Songs play through the on-board **ES8388** codec to a speaker on the 3.5 mm headphone jack.
 - The song name and a confirmation message appear on the on-board **240×240 ST7789 LCD**.
-- Buttons **B2–B4** pick a song in binary, **B1** selects and confirms (5 s window), **USER_BUTTON** stops/plays.
+- Buttons **B2–B4** pick a song in binary, **B1** selects and confirms (5 s window), **KEY_UP** stops/plays, and **KEY_LEFT/KEY_RIGHT** adjust volume.
 - An **RGB LED** shows the state (blue playing, red paused, green changing song).
-- A **potentiometer** sets the volume.
+- The on-board **KEY_LEFT/KEY_RIGHT** buttons set the volume and the LCD shows a volume bar.
 - Usage instructions are printed on the **UART** console.
 - Three FreeRTOS threads run cooperatively, the LCD is protected by a **mutex**, and the MCU sleeps when idle.
 - Uses the course files: `song.h` / `song_def.h` unchanged, and the `NHD_0216HZ` driver ported to the on-board LCD.
@@ -56,7 +56,8 @@ Each button: **3.3 V → 330 Ω → GPIO pin**, and **GPIO pin → button → GN
 
 The internal pull-ups are also enabled, so a missing 330 Ω resistor won't leave an input floating.
 
-**USER_BUTTON** is the on-board **KEY_LEFT** key (PC0). It needs no wiring.
+**KEY_UP** is the play/pause key (PC5). **KEY_LEFT** and **KEY_RIGHT** adjust
+volume down/up (PC0 and PC4). They need no wiring.
 
 ### RGB LED (handout Figure 1.4)
 
@@ -116,19 +117,19 @@ B2 B3 B4   Song
   1  1  0   7. Nocturne in C sharp - Chopin
   1  1  1   8. Symphony No. 40 - Mozart
 
-LCD id 0x81B3 | ES8388 OK | I2S 32609 Hz
-Playback is stopped: press USER to play song 1.
+LCD id 0x81B3 | ES8388 READY | I2S 32609 Hz
+Song 1 starts automatically. Press USER to pause/resume.
 ```
 
 ## Using the player
 
-1. Press **USER (KEY_LEFT)** to play. The LED turns **blue**. Press again to pause (**red**).
+1. Song 1 starts automatically after a successful boot. Press **KEY_UP** to pause (**red**) or resume (**blue**).
 2. To change song, hold **B2 B3 B4** for the song number in binary. Nothing held = song 1 (Für Elise), B2+B4 = `101` = song 6 (Waltz No. 2).
 3. Keep them held and press **B1**, then release everything. The LED turns **green** and the LCD asks
    "Change song?" with a countdown.
 4. Press **B1** again within **5 s** to play the new song from the start. If you don't, the display returns
    to the current song and playback carries on as before.
-5. Turn the **potentiometer** to change the volume. The LCD shows the level at the bottom.
+5. Press **KEY_LEFT** or **KEY_RIGHT** to lower or raise the volume. The LCD shows the level at the bottom.
 
 ## Software design
 
@@ -244,7 +245,7 @@ matches `src/board_init.c`.
 ## Tests
 
 ```sh
-pio test -e native          # 51 unit tests on the PC, under AddressSanitizer + UBSan (no board needed)
+pio test -e native          # 52 unit tests on the PC, under AddressSanitizer + UBSan (no board needed)
 pio test -e rtspark_test    # 11 on-board tests (board on USB-DBG; don't press any button)
 ```
 
@@ -279,7 +280,7 @@ All three report nothing. The findings fixed along the way, the ones accepted an
 - **On hardware:** not yet run.
   - These peripheral settings come from the RT-Spark schematic and RT-Thread's official BSP:
     LCD FSMC bank and A18 RS line, the ST7789 init sequence, I2S3/I2C2 pins and the ES8388 register sequence.
-  - At first power-up, check the UART line `LCD id 0x81B3 | ES8388 OK`, or run `pio test -e rtspark_test`.
+  - At first power-up, check the UART line `LCD id 0x81B3 | ES8388 READY`, listen for Song 1 to start automatically, or run `pio test -e rtspark_test`.
     The on-board suite compiles, but hasn't been run.
 
 ## Troubleshooting
@@ -287,7 +288,7 @@ All three report nothing. The findings fixed along the way, the ones accepted an
 | Symptom | Check |
 |---|---|
 | On-board red LED blinks fast | An init step failed (`Error_Handler`). Re-flash; check the board's power switch |
-| `ES8388 NOT RESPONDING` | I2C2 (PF0/PF1) is shared with the on-board sensors; power-cycle the board |
+| `ES8388 ERROR` | Check the codec I2C2 path on PF0/PF1 and power-cycle the board; the firmware now verifies the critical playback registers before starting the song |
 | No sound but the LED is blue | Volume at 0 % (pot fully down); speaker on Tip + Sleeve of the jack |
 | Buttons do nothing | Buttons must connect the pin to **GND** when pressed; check the 330 Ω pull-ups to 3.3 V |
 | LED colours inverted | Set `RGB_LED_COMMON_ANODE` in `include/main.h` |

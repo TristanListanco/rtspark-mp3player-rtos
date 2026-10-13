@@ -109,5 +109,5 @@ uint8_t volume_to_attenuation(int percent)
 {
     if (percent < 0) percent = 0;
     if (percent > 100) percent = 100;
-    return (uint8_t)((100 - percent) * 120 / 100);
+    return (uint8_t)((100 - percent) * 192 / 100);
 }

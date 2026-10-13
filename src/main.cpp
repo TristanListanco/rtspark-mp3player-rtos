@@ -12,12 +12,12 @@
  *  - LCD shows the song name while playing and a confirmation message while
  *    a new song is being chosen.
  *  - RGB LED: blue = playing, red = paused, green = changing song.
- *  - Potentiometer sets the volume; usage instructions are sent over UART.
+ *  - LEFT/RIGHT keys set the volume; usage instructions are sent over UART.
  *
  * Threads (each an infinite loop that waits after every update):
  *  1. update_lcd_leds_thread()  LCD + RGB LEDs
  *  2. polling_buttons()         B1..B4 and USER_BUTTON
- *  3. adjust_volume()           potentiometer -> ES8388 volume
+ *  3. adjust_volume()           LEFT/RIGHT keys -> ES8388 volume
  * Interrupt-driven timers (timer_if.h):
  *  - Ticker  music_ticker       plays the song note by note
  *  - Timeout confirm_timeout    5 s confirmation window
@@ -79,8 +79,8 @@ static const TickType_t kLcdPeriod       = pdMS_TO_TICKS(50);
 static const TickType_t kButtonPeriod    = pdMS_TO_TICKS(10);
 static const TickType_t kVolumePeriod    = pdMS_TO_TICKS(100);
 static const uint8_t    kDebounceSamples = 3;        /* x kButtonPeriod = 30 ms */
-static const uint32_t   kPotRawMin       = 80;       /* ADC counts at the ends of the */
-static const uint32_t   kPotRawMax       = 4000;     /* pot travel (100R keeps min > 0) */
+static const int        kInitialVolume   = 80;
+static const int        kVolumeStep      = 5;
 
 static_assert(kNumSongs >= kSelectableSongs, "need at least 8 songs");
 
@@ -97,8 +97,18 @@ static const Pin button1     = { BTN1_GPIO_Port, BTN1_Pin };         /* select /
 static const Pin button2     = { BTN2_GPIO_Port, BTN2_Pin };         /* song bit 2 (MSB) */
 static const Pin button3     = { BTN3_GPIO_Port, BTN3_Pin };         /* song bit 1 */
 static const Pin button4     = { BTN4_GPIO_Port, BTN4_Pin };         /* song bit 0 (LSB) */
-static const Pin user_button = { USER_BTN_GPIO_Port, USER_BTN_Pin }; /* play / stop */
-/* Potentiometer: ADC3 channel 4 (hadc3, PF6) */
+static const Pin user_button = { GPIOC, GPIO_PIN_5 }; /* KEY_UP: play / stop */
+static const Pin volume_down = { GPIOC, GPIO_PIN_0 }; /* KEY_LEFT */
+static const Pin volume_up   = { GPIOC, GPIO_PIN_4 }; /* KEY_RIGHT */
+
+static void init_application_keys(void)
+{
+    GPIO_InitTypeDef g = {0};
+    g.Pin = GPIO_PIN_4 | GPIO_PIN_5;
+    g.Mode = GPIO_MODE_INPUT;
+    g.Pull = GPIO_PULLUP;
+    HAL_GPIO_Init(GPIOC, &g);
+}
 
 /* Outputs */
 static const Pin led_red     = { LED_RED_GPIO_Port, LED_RED_Pin };
@@ -383,7 +393,7 @@ static void polling_buttons(void *arg)
         debounce(btn4, is_pressed(button4), kDebounceSamples);
         const bool user_pressed = debounce(user, is_pressed(user_button), kDebounceSamples);
 
-        /* USER_BUTTON: stop / play */
+        /* KEY_UP: stop / play */
         if (user_pressed) {
             if (play_state == PLAYING) {
                 stop_playback();
@@ -429,24 +439,9 @@ static void polling_buttons(void *arg)
     }
 }
 
-/* ===========================================================================
- * Thread 3: adjust the volume from the potentiometer
+/* ==========================================================================
+ * Thread 3: adjust the volume from the left/right keys
  * ========================================================================= */
-static uint32_t read_potentiometer(void)
-{
-    uint32_t sum = 0;
-    uint32_t n = 0;
-    for (int i = 0; i < 8; i++) {
-        HAL_ADC_Start(&hadc3);
-        if (HAL_ADC_PollForConversion(&hadc3, 2) == HAL_OK) {
-            sum += HAL_ADC_GetValue(&hadc3);
-            n++;
-        }
-    }
-    HAL_ADC_Stop(&hadc3);
-    return n > 0 ? sum / n : 0;
-}
-
 static void draw_volume(int percent)
 {
     char text[24];
@@ -473,24 +468,57 @@ static void apply_volume(int percent)
 
 static void adjust_volume(void *arg)
 {
-    int volume = -1;
+    int volume = kInitialVolume;
+    Debouncer left = { false, 0 };
+    Debouncer right = { false, 0 };
+    bool shown = false;
+    uint16_t left_repeat = 0;
+    uint16_t right_repeat = 0;
 
     for (;;) {
-        const int percent = pot_to_percent(read_potentiometer(), kPotRawMin, kPotRawMax);
+        const bool left_pressed = debounce(left, is_pressed(volume_down), kDebounceSamples);
+        const bool right_pressed = debounce(right, is_pressed(volume_up), kDebounceSamples);
+        int requested = volume;
+        if (left_pressed && !right_pressed) {
+            requested -= kVolumeStep;
+            left_repeat = 0;
+        } else if (left.pressed && !right.pressed) {
+            if (++left_repeat >= 30 && ((left_repeat - 30) % 10) == 0) {
+                requested -= kVolumeStep;
+            }
+        } else {
+            left_repeat = 0;
+        }
+        if (right_pressed && !left_pressed) {
+            requested += kVolumeStep;
+            right_repeat = 0;
+        } else if (right.pressed && !left.pressed) {
+            if (++right_repeat >= 30 && ((right_repeat - 30) % 10) == 0) {
+                requested += kVolumeStep;
+            }
+        } else {
+            right_repeat = 0;
+        }
+        if (requested < 0) requested = 0;
+        if (requested > 100) requested = 100;
 
-        if (volume_should_update(volume, percent)) {
-            volume = percent;
-            apply_volume(percent);
+        if (volume != requested) {
+            apply_volume(requested);
+            volume = requested;
 
             {
                 const LcdLock lock;      /* exclusive LCD access */
-                draw_volume(percent);
+                draw_volume(volume);
             }
 
-            console_printf("Volume: %d%%\r\n", percent);
+            console_printf("Volume: %d%%\r\n", volume);
+        } else if (!shown && codec_ok) {
+            const LcdLock lock;
+            draw_volume(volume);
+            shown = true;
         }
 
-        vTaskDelay(kVolumePeriod);       /* wait: let the next thread run */
+        vTaskDelay(kButtonPeriod);       /* sample volume keys at button rate */
     }
 }
 
@@ -505,14 +533,14 @@ static void print_instructions(uint16_t lcd_id)
         "   RT-Spark Personal MP3 Player (FreeRTOS, 3 threads)\r\n"
         "=====================================================\r\n"
         "How to use:\r\n"
-        "  USER button (KEY_LEFT) : stop / play the current song\r\n"
+        "  KEY_UP                 : stop / play the current song\r\n"
         "  Change the song:\r\n"
         "    1. Hold B2 B3 B4 to set the song number in binary\r\n"
         "       (B2 = MSB, pressed = 1; nothing pressed = song 1)\r\n"
         "    2. While holding them, press B1, then release all buttons\r\n"
         "    3. Press B1 again within 5 s to confirm\r\n"
         "       (no confirmation in 5 s = keep the current song)\r\n"
-        "  Potentiometer          : volume\r\n"
+        "  KEY_LEFT / KEY_RIGHT   : volume down / up\r\n"
         "LEDs: BLUE = playing, RED = paused, GREEN = changing song\r\n"
         "\r\n"
         "B2 B3 B4   Song\r\n");
@@ -521,9 +549,9 @@ static void print_instructions(uint16_t lcd_id)
                        (i >> 2) & 1, (i >> 1) & 1, i & 1, i + 1, full_name(i));
     }
     console_printf("\r\nLCD id 0x%04X | ES8388 %s | I2S %lu Hz\r\n",
-                   lcd_id, codec_ok ? "OK" : "NOT RESPONDING (check I2C2 PF0/PF1)",
+                   lcd_id, codec_ok ? "READY" : "ERROR (codec init/start/readback failed)",
                    (unsigned long)audio_sample_rate());
-    console_write("Playback is stopped: press USER to play song 1.\r\n\r\n");
+    console_write("Song 1 starts automatically. Press KEY_UP to pause/resume.\r\n\r\n");
 }
 
 int main(void)
@@ -532,6 +560,7 @@ int main(void)
     SystemClock_Config();
 
     MX_GPIO_Init();
+    init_application_keys();
     MX_DMA_Init();
     MX_USART1_UART_Init();
     MX_FSMC_Init();
@@ -544,9 +573,25 @@ int main(void)
     lcd_clear(LCD_BLACK);
     lcd.init_lcd();
 
-    /* Audio: I2S clocks + DMA first (the codec runs from MCLK), then the codec */
+    /* Audio startup order mirrors the RT-Spark BSP: prepare PCM, configure and
+     * start the ES8388 DAC path, verify its critical registers, then enable
+     * I2S DMA. I2S3 itself was already initialized above, so MCLK is present. */
     audio_init();
     codec_ok = (es8388_init() == HAL_OK);
+    if (codec_ok) {
+        codec_ok = (es8388_start_dac() == HAL_OK);
+    }
+    if (codec_ok) {
+        /* Start at a clearly audible but safer level until the volume task
+         * applies the key-controlled setting after the scheduler starts. */
+        codec_ok = (es8388_set_attenuation(20u) == HAL_OK);
+    }
+    if (codec_ok) {
+        (void)es8388_verify_playback_config();
+    }
+    if (audio_start() != HAL_OK) {
+        Error_Handler();
+    }
 
     /* Note: once a FreeRTOS object exists, FreeRTOS keeps interrupts at
      * priority >= 5 masked until the scheduler starts, so HAL_Delay() must
@@ -563,8 +608,16 @@ int main(void)
         Error_Handler();
     }
 
-    /* Send the instructions for using the audio player via UART */
+    /* Send the instructions for using the audio player via UART. */
     print_instructions(lcd_id);
+
+    /* Auto-start song 1 so successful audio hardware is immediately obvious.
+     * USER still toggles pause/resume exactly as required by the lab. */
+    if (codec_ok) {
+        start_playback();
+    } else {
+        console_write("Audio playback not started because ES8388 setup failed.\r\n");
+    }
 
     /* Hand the CPU to the threads. When all of them are waiting, the idle
      * hook (freertos_hooks.c) puts the MCU into sleep mode. */

@@ -87,8 +87,8 @@ int pot_to_percent(uint32_t raw, uint32_t raw_min, uint32_t raw_max);
  * shown < 0 means nothing applied yet. */
 bool volume_should_update(int shown, int percent);
 
-/* ES8388 DAC attenuation in 0.5 dB steps, linear in dB:
- * 100 % -> 0 (0 dB) ... 1 % -> 118 (-59 dB). 0 % is handled by muting. */
+/* ES8388 DAC attenuation in 0.5 dB steps, linear across the full codec range:
+ * 100 % -> 0 dB, 1 % -> about -96 dB. 0 % is handled by muting. */
 uint8_t volume_to_attenuation(int percent);
 
 #endif /* PLAYER_LOGIC_H */

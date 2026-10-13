@@ -228,9 +228,9 @@ static void test_volume_hysteresis(void)
 static void test_volume_to_attenuation(void)
 {
     TEST_ASSERT_EQUAL_UINT8(0, volume_to_attenuation(100));     /* 0 dB */
-    TEST_ASSERT_EQUAL_UINT8(60, volume_to_attenuation(50));     /* -30 dB */
-    TEST_ASSERT_EQUAL_UINT8(118, volume_to_attenuation(1));     /* -59 dB */
-    TEST_ASSERT_EQUAL_UINT8(120, volume_to_attenuation(-5));    /* clamped */
+    TEST_ASSERT_EQUAL_UINT8(96, volume_to_attenuation(50));     /* -48 dB */
+    TEST_ASSERT_EQUAL_UINT8(190, volume_to_attenuation(1));     /* about -95 dB */
+    TEST_ASSERT_EQUAL_UINT8(192, volume_to_attenuation(-5));    /* clamped */
     TEST_ASSERT_EQUAL_UINT8(0, volume_to_attenuation(150));
     for (int p = 1; p < 100; p++) {                             /* louder = less attenuation */
         TEST_ASSERT_TRUE(volume_to_attenuation(p + 1) <= volume_to_attenuation(p));
