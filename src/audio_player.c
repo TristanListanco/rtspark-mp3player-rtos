@@ -31,14 +31,22 @@ void audio_init(void)
 {
     synth_init(compute_sample_rate());
 
-    for (uint32_t i = 0; i < sizeof dma_buf / sizeof dma_buf[0]; i++) {
+    for (uint32_t i = 0u; i < (uint32_t)(sizeof dma_buf / sizeof dma_buf[0]); ++i) {
         dma_buf[i] = 0;
     }
-    /* Size is in 16-bit words for a 16-bit I2S data format */
-    if (HAL_I2S_Transmit_DMA(&hi2s3, (uint16_t *)dma_buf,
-                             sizeof dma_buf / sizeof dma_buf[0]) != HAL_OK) {
-        Error_Handler();
-    }
+}
+
+HAL_StatusTypeDef audio_start(void)
+{
+    /* HAL size is in 16-bit words for the configured 16-bit I2S format. */
+    return HAL_I2S_Transmit_DMA(&hi2s3, (uint16_t *)dma_buf,
+                                (uint16_t)(sizeof dma_buf / sizeof dma_buf[0]));
+}
+
+HAL_StatusTypeDef audio_shutdown(void)
+{
+    audio_stop();
+    return HAL_I2S_DMAStop(&hi2s3);
 }
 
 uint32_t audio_sample_rate(void)

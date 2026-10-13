@@ -59,7 +59,9 @@ static void test_lcd_reports_st7789v3_id(void)
 static void test_codec_answers_on_i2c2(void)
 {
     TEST_ASSERT_EQUAL_INT(HAL_OK, es8388_init());
+    TEST_ASSERT_EQUAL_INT(HAL_OK, es8388_start_dac());
     TEST_ASSERT_EQUAL_INT(HAL_OK, es8388_set_attenuation(20));    /* -10 dB */
+    TEST_ASSERT_EQUAL_INT(HAL_OK, es8388_verify_playback_config());
 }
 
 static void test_i2s_runs_at_expected_sample_rate(void)
@@ -67,6 +69,7 @@ static void test_i2s_runs_at_expected_sample_rate(void)
     audio_init();
     /* 192 MHz / (256 * 23) = 32609 Hz */
     TEST_ASSERT_UINT32_WITHIN(5, 32609, audio_sample_rate());
+    TEST_ASSERT_EQUAL_INT(HAL_OK, audio_start());
 
     /* DMA is streaming: its remaining-count register keeps changing */
     const uint32_t a = hdma_spi3_tx.Instance->NDTR;
