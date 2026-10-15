@@ -3,6 +3,12 @@
 An 8-song "MP3 player" for the RT-Thread **RT-Spark** board (STM32F407ZGT6), built with
 **PlatformIO + STM32Cube HAL + FreeRTOS** (no Arduino framework).
 
+## Prototype
+
+![RT-Spark MP3 Player hardware prototype](https://github.com/user-attachments/assets/809a5bc3-caa4-44bb-8eed-e12424d5091c)
+
+The completed prototype was manually tested for audio playback, LCD display, song selection, play/pause, LED indicators, and potentiometer volume control.
+
 - Songs play through the on-board **ES8388** codec to a speaker on the 3.5 mm headphone jack.
 - The song name and a confirmation message appear on the on-board **240×240 ST7789 LCD**.
 - Buttons **B2–B4** pick a song in binary, **B1** selects and confirms (5 s window), **KEY_UP** stops/plays.
@@ -63,14 +69,15 @@ by the potentiometer; KEY_LEFT and KEY_RIGHT are unused.
 
 | Colour | MCU pin | 40-pin header (right column) |
 |---|---|---|
-| Red   | **PG2** | row 11 |
+| Red | **PG2** | row 11 |
 | Green | **PG4** | row 12 |
-| Blue  | **PG6** | row 13 |
+| Blue | **PG6** | row 13 |
 | Common | GND (common cathode) or 3.3 V (common anode) | row 10 = GND |
 
 Put a series resistor on each colour.
 
-The code assumes a **common-cathode** LED. For a **common-anode** LED, set `RGB_LED_COMMON_ANODE` to `1` in `include/main.h`.
+The code assumes a **common-cathode** LED. For a **common-anode** LED, set
+`RGB_LED_COMMON_ANODE` to `1` in `include/main.h`.
 
 The on-board red (PF12) and blue (PF11) LEDs mirror the red/blue state, so you can test before the breadboard is wired.
 
@@ -247,7 +254,7 @@ matches `src/board_init.c`.
 | Block | Setting |
 |---|---|
 | RCC | HSE crystal 8 MHz; PLL M 4, N 168, P 2, Q 7 → 168 MHz; APB1 /4, APB2 /2; PLLI2S N 192, R 2 |
-| SYS | Debug: Serial Wire; timebase SysTick (shared with FreeRTOS) |
+| SYS | Debug: Serial Wire; timebase SysTick (shared with FreeRTOS tick) |
 | GPIO out | PG2, PG4, PG6 (RGB); PF11, PF12 (board LEDs); PD3 (LCD_RST); PF9 (LCD_BL) |
 | GPIO in (pull-up) | PD10, PD8, PE14, PE12 (B1–B4); PC5 (KEY_UP) |
 | ADC3 | IN4 (PF6), 12-bit, software start, 480 cycles |
