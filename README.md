@@ -293,7 +293,7 @@ All three report nothing. The findings fixed along the way, the ones accepted an
   - All 856 pitched notes were within ±25 cents.
   - All 342 rests were silent, with no clipping or discontinuities.
 - **Static analysis:** cppcheck, clang-tidy and the strict GCC warnings are clean for the project code.
-- **On hardware:** not yet run.
+- **On hardware:** manually tested on the completed prototype; audio playback, LCD display, song selection, play/pause, LED indicators, and potentiometer volume control are working.
   - These peripheral settings come from the RT-Spark schematic and RT-Thread's official BSP:
     LCD FSMC bank and A18 RS line, the ST7789 init sequence, I2S3/I2C2 pins and the ES8388 register sequence.
   - At first power-up, check the UART line `LCD id 0x81B3 | ES8388 READY`, listen for Song 1 to start automatically, or run `pio test -e rtspark_test`.
